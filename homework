@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+
+import argparse
+import subprocess
+import sys
+import os
+from datetime import datetime
+
+def is_valid_name(server_name):
+    if (not isinstance(server_name, str)):
+        return 0
+    if ((len(server_name) < 1) or (len(server_name)>32)):
+        return 0
+    alphabet = [chr(i) for i in range(ord('a'),ord('z')+1)]
+    for letter in server_name:
+        if (letter not in alphabet):
+            return 0
+    
+    return 1
+
+def start(args):
+    server_name = args.name
+    server_port = args.port
+    if (not is_valid_name(server_name)):
+        print("Exception: name is invalid", file=sys.stderr)
+        sys.exit(1)
+    subprocess.run(["mkdir", server_name], check=True)
+    subprocess.run(["cp","./server.py",str("./"+server_name)], check=True)
+
+
+    has_session = subprocess.run(["tmux","has-session", "-t", "homework"], 
+                                 check=False, capture_output=True)
+    #в случае не существования -- создаем, иначе игнорируем
+    if(has_session.returncode != 0):
+        subprocess.run(["tmux","new","-d", "-s", "homework"], check=True)
+
+    abs_path = os.path.abspath(server_name)
+    command = f"{sys.executable} server.py --port {server_port} > out.txt"
+    subprocess.run(["tmux", "new-window", "-t", 
+                    "homework", "-n", server_name,
+                      "-c", abs_path, command],check=True)
+
+
+
+def stop(args):
+    server_name = args.name
+    if (not is_valid_name(server_name)):
+        print("Exception: name is invalid", file=sys.stderr)
+        sys.exit(1)
+
+    if (not os.path.exists(server_name)):
+        print(f"Exception: server {server_name} not found", file=sys.stderr)
+        sys.exit(1)
+
+    subprocess.run(["tmux", "kill-window", 
+                    "-t", f"homework:{server_name}"],
+                    check=False)
+    #если сервер уже упал нет смысла кидать ошибку
+    os.makedirs(".backup",exist_ok=True)
+
+
+    current_time = datetime.now()
+    timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+    backup_filename = f"out_{server_name}_{timestamp}.txt"
+    dest_path = os.path.join(".backup", backup_filename)
+    src_path = os.path.join(server_name,"out.txt")
+    if os.path.exists(src_path):
+        subprocess.run(["mv", src_path, dest_path], check=True)
+    else:
+        print(f"Warning: no log file found for server '{server_name}'",file=sys.stderr)
+
+    subprocess.run(["rm", "-r", server_name], check=True)
+
+def stop_all(args):
+    os.makedirs(".backup",exist_ok=True)
+    all_items = os.listdir(".")
+    for name in all_items:
+        if(is_valid_name(name) and os.path.isdir(name)):
+            stop(argparse.Namespace(name=name))
+    subprocess.run(["tmux", "kill-session", "-t", "homework"],check=False)
+    
+
+
+
+def collect_all(args):
+    all_items = os.listdir(".")
+    rez = []
+    for name in all_items:
+        if(is_valid_name(name) and os.path.isdir(name)):
+            rez.append(name)
+    rez.sort()
+    for elem in rez:
+        log_path = os.path.join(elem,"out.txt")
+        if (os.path.exists(log_path)):
+            with open(log_path, "r",encoding = "utf-8") as f:
+                content = f.read()
+                print(f"=== server: {elem} ===")
+                print(content)
+                print()
+        
+    
+parser = argparse.ArgumentParser(
+                    prog='homework',
+                    description='Program is working with server.py',
+                    epilog='42'
+)
+#обработка start
+subparsers = parser.add_subparsers(required=True)
+subparser_start = subparsers.add_parser('start')
+subparser_start.add_argument('-n', '--name',
+                     type=str,
+                     help = 'enter filename to start it')
+subparser_start.add_argument('-p', '--port',
+                    type=int,
+                    help='enter port number')
+subparser_start.set_defaults(func=start)
+
+#обработка stop
+subparser_stop = subparsers.add_parser('stop')
+subparser_stop.add_argument('-n', '--name',
+                            type=str,
+                            help = 'enter filename to stop it')
+subparser_stop.set_defaults(func=stop)
+
+#обработка stop_all
+subparser_stop_all = subparsers.add_parser('stop_all')
+subparser_stop_all.set_defaults(func=stop_all)
+
+#обработка collect_all
+subparser_collect_all = subparsers.add_parser('collect_all')
+subparser_collect_all.set_defaults(func=collect_all)
+
+args = parser.parse_args()
+args.func(args)
+
+#subprocess.run(['ls', '-la'], check=True)
+
+
+
+
+
+
